@@ -6,13 +6,18 @@
 const http = require("http");
 const { loadSchema } = require("./proto_loader");
 const { runInference, PROVIDER, DEFAULT_MODEL } = require("./inference");
+const { handleGraphql, MODELS } = require("./graphql");
 
 const PORT = process.env.WARPINATOR_BRIDGE_PORT || 8787;
 const { ResponseEvent, Request } = loadSchema();
 
 function sseWrite(res, evtObj) {
   const bytes = ResponseEvent.encode(ResponseEvent.fromObject(evtObj)).finish();
-  res.write(`data: ${Buffer.from(bytes).toString("base64")}\n\n`);
+  // Warp decodes SSE frames with URL-safe base64 (base64::BASE64_URL_SAFE), where the
+  // standard-alphabet chars '+' and '/' are INVALID. Emit padded URL-safe base64 to match,
+  // otherwise frames whose bytes contain '+'/'/' fail with "Invalid symbol ..., offset ...".
+  const b64url = Buffer.from(bytes).toString("base64").replace(/\+/g, "-").replace(/\//g, "_");
+  res.write(`data: ${b64url}\n\n`);
 }
 
 function readBody(req) {
@@ -153,6 +158,22 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && (url === "/ai/multi-agent" || url === "/agent-mode-evals/multi-agent")) {
     const body = await readBody(req);
     return handleMultiAgent(req, res, body);
+  }
+
+  // GraphQL: answer model-discovery (freeAvailableModels) so Warp's model picker
+  // populates with our OpenRouter models; everything else 404s benignly.
+  if (req.method === "POST" && url === "/graphql/v2") {
+    const body = await readBody(req);
+    const gql = handleGraphql(body.toString("utf8"));
+    if (gql) {
+      console.log(`  graphql: served freeAvailableModels (${MODELS.length} models)`);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(gql));
+      return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ warpinator_bridge: true, graphql: "unhandled" }));
+    return;
   }
 
   // Benign fallback for every other root path the redirected client may hit

@@ -142,6 +142,14 @@ function buildContext(reqObj) {
   };
 }
 
+// Resolve which model to use: the model the user picked in Warp
+// (request.settings.model_config.base) if it's a real id we can use, else the default.
+function resolveModelId(reqObj) {
+  const base = reqObj && reqObj.settings && reqObj.settings.model_config && reqObj.settings.model_config.base;
+  if (typeof base === "string" && base && base !== "auto") return base;
+  return DEFAULT_MODEL;
+}
+
 // Stream a completion. Callbacks: onDelta(text), onToolCall(piToolCall), onError(Error), onDone().
 async function runInference(reqObj, { onDelta, onToolCall, onError, onDone } = {}) {
   const apiKey = loadApiKey(reqObj);
@@ -156,8 +164,15 @@ async function runInference(reqObj, { onDelta, onToolCall, onError, onDone } = {
   }
   try {
     const { getModel, stream } = await getPi();
-    const model = getModel(PROVIDER, DEFAULT_MODEL);
-    console.log(`  inference: ${PROVIDER}/${DEFAULT_MODEL}, ${context.messages.length} msg(s), ${context.tools.length} tool(s)`);
+    const requestedId = resolveModelId(reqObj);
+    let model;
+    try {
+      model = getModel(PROVIDER, requestedId);
+    } catch (_) {
+      console.warn(`  model '${requestedId}' unknown to pi-ai; falling back to ${DEFAULT_MODEL}`);
+      model = getModel(PROVIDER, DEFAULT_MODEL);
+    }
+    console.log(`  inference: ${PROVIDER}/${requestedId}, ${context.messages.length} msg(s), ${context.tools.length} tool(s)`);
     const events = stream(model, context, { apiKey });
     for await (const evt of events) {
       if (evt.type === "text_delta" && evt.delta) {
