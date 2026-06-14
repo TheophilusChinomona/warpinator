@@ -43,44 +43,104 @@ function loadApiKey(reqObj, provider = PROVIDER) {
   return process.env[`${provider.toUpperCase()}_API_KEY`] || process.env.OPENROUTER_API_KEY || null;
 }
 
-// Tools exposed to the model. For now: run_shell_command (the core agent capability).
-// Only advertise it if the Warp client said it supports it.
+// Tools exposed to the model, mapped to Warp tool calls (Warp executes them
+// client-side in the user's terminal and returns results on the next request).
 function buildTools(reqObj) {
   const { Type } = getTypeBox();
-  const supported = (reqObj && reqObj.settings && reqObj.settings.supported_tools) || [];
-  // supported_tools is a list of ToolType enum values (numbers or names depending on decode);
-  // RUN_SHELL_COMMAND == 0. Advertise unconditionally if the list is empty (older/looser clients).
-  const tools = [];
-  tools.push({
-    name: "run_shell_command",
-    description:
-      "Run a shell command in the user's terminal and return its output. " +
-      "Use this whenever the task requires executing a command, inspecting the system, or running code.",
-    parameters: Type.Object({
-      command: Type.String({ description: "The exact shell command to run." }),
-    }),
-  });
-  return tools;
+  return [
+    {
+      name: "run_shell_command",
+      description:
+        "Run a shell command in the user's terminal and return its output. " +
+        "Use whenever the task requires executing a command, inspecting the system, or running code.",
+      parameters: Type.Object({
+        command: Type.String({ description: "The exact shell command to run." }),
+      }),
+    },
+    {
+      name: "read_files",
+      description:
+        "Read the contents of one or more files (paths relative to the working directory). " +
+        "Always read a file before editing it so your search text matches exactly.",
+      parameters: Type.Object({
+        paths: Type.Array(Type.String(), { description: "File paths to read." }),
+      }),
+    },
+    {
+      name: "apply_file_diffs",
+      description:
+        "Edit existing files via exact search/replace, create new files, and/or delete files. " +
+        "For edits, `search` MUST match the current file content exactly (read the file first).",
+      parameters: Type.Object({
+        summary: Type.Optional(Type.String({ description: "Short summary of the changes." })),
+        diffs: Type.Optional(
+          Type.Array(
+            Type.Object({
+              file_path: Type.String(),
+              search: Type.String({ description: "Exact existing text to replace." }),
+              replace: Type.String({ description: "Replacement text." }),
+            }),
+            { description: "Search/replace edits to existing files." }
+          )
+        ),
+        new_files: Type.Optional(
+          Type.Array(Type.Object({ file_path: Type.String(), content: Type.String() }), {
+            description: "New files to create.",
+          })
+        ),
+        deleted_files: Type.Optional(
+          Type.Array(Type.String(), { description: "Paths of files to delete." })
+        ),
+      }),
+    },
+    {
+      name: "grep",
+      description: "Search file contents for terms or regex patterns. Returns matching files and line numbers.",
+      parameters: Type.Object({
+        queries: Type.Array(Type.String(), { description: "Search terms or regex patterns." }),
+        path: Type.Optional(Type.String({ description: "Relative file/dir to search in (default: whole project)." })),
+      }),
+    },
+    {
+      name: "file_glob",
+      description: "Find files by name pattern (supports ?, *, []). Returns matching file paths.",
+      parameters: Type.Object({
+        patterns: Type.Array(Type.String(), { description: "Glob patterns to match file names against." }),
+        search_dir: Type.Optional(Type.String({ description: "Relative directory to search in." })),
+      }),
+    },
+  ];
 }
 
 // --- Warp <-> Pi message mapping ---------------------------------------------
 
 function piToolCallFromWarp(tc) {
-  if (tc.run_shell_command) {
-    return {
-      type: "toolCall",
-      id: tc.tool_call_id || "tc",
-      name: "run_shell_command",
-      arguments: { command: tc.run_shell_command.command || "" },
-    };
+  const id = tc.tool_call_id || "tc";
+  const mk = (name, args) => ({ type: "toolCall", id, name, arguments: args });
+  if (tc.run_shell_command) return mk("run_shell_command", { command: tc.run_shell_command.command || "" });
+  if (tc.read_files) return mk("read_files", { paths: (tc.read_files.files || []).map((f) => f.name) });
+  if (tc.grep) return mk("grep", { queries: tc.grep.queries || [], path: tc.grep.path });
+  if (tc.file_glob_v2) return mk("file_glob", { patterns: tc.file_glob_v2.patterns || [], search_dir: tc.file_glob_v2.search_dir });
+  if (tc.apply_file_diffs) {
+    const a = tc.apply_file_diffs;
+    return mk("apply_file_diffs", {
+      summary: a.summary,
+      diffs: a.diffs,
+      new_files: a.new_files,
+      deleted_files: (a.deleted_files || []).map((d) => d.file_path),
+    });
   }
   return null;
 }
 
 function piToolResultFromWarp(tcr) {
-  let text = "(no output)";
+  const id = tcr.tool_call_id || "tc";
+  let toolName = "tool";
+  let text = "(no result)";
   let isError = false;
+
   if (tcr.run_shell_command) {
+    toolName = "run_shell_command";
     const r = tcr.run_shell_command;
     if (r.command_finished) {
       const code = r.command_finished.exit_code || 0;
@@ -93,18 +153,59 @@ function piToolResultFromWarp(tcr) {
     } else if (r.long_running_command_snapshot) {
       text = "(command is now running in the background)";
     }
+  } else if (tcr.read_files) {
+    toolName = "read_files";
+    const r = tcr.read_files;
+    if (r.error) {
+      text = `Error: ${r.error.message}`;
+      isError = true;
+    } else {
+      const files =
+        (r.text_files_success && r.text_files_success.files) ||
+        ((r.any_files_success && r.any_files_success.files) || []).map((a) => a.text_content).filter(Boolean);
+      text =
+        (files || []).map((f) => `=== ${f.file_path} ===\n${f.content || ""}`).join("\n\n") || "(no file content)";
+    }
+  } else if (tcr.apply_file_diffs) {
+    toolName = "apply_file_diffs";
+    const r = tcr.apply_file_diffs;
+    if (r.error) {
+      text = `Error applying diffs: ${r.error.message}`;
+      isError = true;
+    } else {
+      const upd = ((r.success && r.success.updated_files_v2) || []).map((u) => u.file && u.file.file_path).filter(Boolean);
+      const del = ((r.success && r.success.deleted_files) || []).map((d) => d.file_path);
+      text = `Applied. Updated: ${upd.join(", ") || "none"}. Deleted: ${del.join(", ") || "none"}.`;
+    }
+  } else if (tcr.grep) {
+    toolName = "grep";
+    const r = tcr.grep;
+    if (r.error) {
+      text = `Error: ${r.error.message}`;
+      isError = true;
+    } else {
+      const mf = (r.success && r.success.matched_files) || [];
+      text = mf.length
+        ? mf.map((f) => `${f.file_path}: lines ${(f.matched_lines || []).map((l) => l.line_number).join(", ")}`).join("\n")
+        : "No matches.";
+    }
+  } else if (tcr.file_glob_v2) {
+    toolName = "file_glob";
+    const r = tcr.file_glob_v2;
+    if (r.error) {
+      text = `Error: ${r.error.message}`;
+      isError = true;
+    } else {
+      const mf = ((r.success && r.success.matched_files) || []).map((f) => f.file_path);
+      text = mf.length ? mf.join("\n") : "No files matched.";
+      if (r.success && r.success.warnings) text += `\n(warnings: ${r.success.warnings})`;
+    }
   } else if (tcr.cancel !== undefined) {
     text = "(tool call cancelled)";
     isError = true;
   }
-  return {
-    role: "toolResult",
-    toolCallId: tcr.tool_call_id || "tc",
-    toolName: "run_shell_command",
-    content: [{ type: "text", text }],
-    isError,
-    timestamp: 0,
-  };
+
+  return { role: "toolResult", toolCallId: id, toolName, content: [{ type: "text", text }], isError, timestamp: 0 };
 }
 
 // Build a Pi Context from the decoded Warp Request: task history (incl. prior

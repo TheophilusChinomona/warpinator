@@ -137,18 +137,37 @@ async function handleMultiAgent(req, res, body) {
   console.log(`  done: ${textLen} chars, ${toolCount} tool call(s)`);
 }
 
-// Map a Pi toolCall to a Warp Message.tool_call oneof payload.
+// Map a Pi toolCall to a Warp Message.tool_call oneof payload. Warp executes
+// these client-side (terminal, file edits with diffs, etc.) and returns results.
 function mapToolCall(tc) {
-  if (tc.name === "run_shell_command") {
-    return {
-      run_shell_command: {
-        command: (tc.arguments && tc.arguments.command) || "",
-        // Ask the harness to wait for completion so we get a full result back.
-        wait_until_complete_value: { wait_until_complete: true },
-      },
-    };
+  const a = tc.arguments || {};
+  switch (tc.name) {
+    case "run_shell_command":
+      return {
+        run_shell_command: {
+          command: a.command || "",
+          // Ask the harness to wait for completion so we get a full result back.
+          wait_until_complete_value: { wait_until_complete: true },
+        },
+      };
+    case "read_files":
+      return { read_files: { files: (a.paths || []).map((p) => ({ name: p })) } };
+    case "apply_file_diffs":
+      return {
+        apply_file_diffs: {
+          summary: a.summary || "",
+          diffs: (a.diffs || []).map((d) => ({ file_path: d.file_path, search: d.search, replace: d.replace })),
+          new_files: (a.new_files || []).map((f) => ({ file_path: f.file_path, content: f.content })),
+          deleted_files: (a.deleted_files || []).map((p) => ({ file_path: p })),
+        },
+      };
+    case "grep":
+      return { grep: { queries: a.queries || [], path: a.path || "" } };
+    case "file_glob":
+      return { file_glob_v2: { patterns: a.patterns || [], search_dir: a.search_dir || "" } };
+    default:
+      return null;
   }
-  return null;
 }
 
 const server = http.createServer(async (req, res) => {
