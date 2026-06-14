@@ -9,6 +9,7 @@
     "encode-test": "node encode-test.js"
   },
   "dependencies": {
+    "@mariozechner/pi-ai": "^0.73.1",
     "protobufjs": "^7.4.0"
   }
 }

@@ -4,7 +4,8 @@
 // ResponseEvent sequence as base64-protobuf over SSE. Later phases swap the canned
 // response for Pi-driven inference.
 const http = require("http");
-const { loadSchema, helloStream } = require("./proto_loader");
+const { loadSchema } = require("./proto_loader");
+const { runInference, PROVIDER, DEFAULT_MODEL } = require("./inference");
 
 const PORT = process.env.WARPINATOR_BRIDGE_PORT || 8787;
 const { ResponseEvent, Request } = loadSchema();
@@ -23,23 +24,21 @@ function readBody(req) {
   });
 }
 
-function handleMultiAgent(req, res, body) {
-  let ctx = {};
+async function handleMultiAgent(req, res, body) {
+  let reqObj = {};
+  let conversationId;
+  let existingTaskId;
   try {
-    const decoded = Request.decode(body);
-    const obj = Request.toObject(decoded, { defaults: false });
-    const convId = obj.metadata && obj.metadata.conversation_id;
-    const tasks = (obj.task_context && obj.task_context.tasks) || [];
+    reqObj = Request.toObject(Request.decode(body), { defaults: false });
+    conversationId = reqObj.metadata && reqObj.metadata.conversation_id;
+    const tasks = (reqObj.task_context && reqObj.task_context.tasks) || [];
     const lastTask = tasks[tasks.length - 1];
-    ctx = {
-      conversation_id: convId || undefined,
-      task_id: lastTask && lastTask.id ? lastTask.id : undefined,
-    };
+    existingTaskId = lastTask && lastTask.id ? lastTask.id : undefined;
     console.log(
-      `  decoded Request: conversation_id=${ctx.conversation_id || "(none)"} tasks=${tasks.length} -> reusing task_id=${ctx.task_id || "(new)"}`
+      `  Request: conversation_id=${conversationId || "(none)"} tasks=${tasks.length} -> task_id=${existingTaskId || "(new)"}`
     );
   } catch (e) {
-    console.warn(`  could not decode Request (${e.message}); using defaults`);
+    console.warn(`  could not decode Request (${e.message})`);
   }
 
   res.writeHead(200, {
@@ -47,8 +46,39 @@ function handleMultiAgent(req, res, body) {
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
   });
-  for (const evt of helloStream(ctx)) sseWrite(res, evt);
+
+  const now = Date.now();
+  const conversation_id = conversationId || `warpinator-conv-${now}`;
+  sseWrite(res, { init: { conversation_id, request_id: `req-${now}`, run_id: `run-${now}` } });
+
+  // Run real inference via Pi; accumulate the reply, then emit it as one
+  // agent_output message (the render path proven in Phase 0/1).
+  let text = "";
+  await runInference(reqObj, {
+    onDelta: (d) => {
+      text += d;
+    },
+    onError: (e) => {
+      text = text || `⚠️ warpinator bridge (${PROVIDER}/${DEFAULT_MODEL}) error: ${e.message}`;
+    },
+  });
+  if (!text) text = "(no response)";
+
+  const task_id = existingTaskId || `warpinator-task-${now}`;
+  const actions = [];
+  if (!existingTaskId) {
+    actions.push({ create_task: { task: { id: task_id, description: "warpinator" } } });
+  }
+  actions.push({
+    add_messages_to_task: {
+      task_id,
+      messages: [{ id: `msg-${now}`, task_id, agent_output: { text } }],
+    },
+  });
+  sseWrite(res, { client_actions: { actions } });
+  sseWrite(res, { finished: { done: {} } });
   res.end();
+  console.log(`  replied ${text.length} chars`);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -67,6 +97,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`warpinator bridge (Phase 0 hello-world) on http://127.0.0.1:${PORT}`);
+  console.log(`warpinator bridge (Phase 2: Pi inference via ${PROVIDER}/${DEFAULT_MODEL}) on http://127.0.0.1:${PORT}`);
   console.log(`Point Warp at it:  WARP_SERVER_ROOT_URL=http://127.0.0.1:${PORT} ./target/debug/warp-oss`);
 });
