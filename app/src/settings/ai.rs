@@ -1545,13 +1545,11 @@ impl AISettings {
     }
 
     pub fn is_any_ai_enabled(&self, app: &AppContext) -> bool {
-        // Disable AI for anonymous and logged-out users.
-        let is_anonymous_or_logged_out = AuthStateProvider::as_ref(app)
-            .get()
-            .is_anonymous_or_logged_out();
-
+        // warpinator: AI runs against the local warpinator bridge using the user's own API keys,
+        // so it does NOT require a Warp account. Upstream disabled all AI for anonymous/logged-out
+        // users here, which (via default_session_mode + agent-mode availability) is what hid the AI
+        // entirely when signed out. We drop that account requirement for the open-source build.
         *self.is_any_ai_enabled
-            && !is_anonymous_or_logged_out
             && !self.is_ai_disabled_due_to_remote_session_org_policy(app)
     }
 

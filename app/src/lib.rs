@@ -92,6 +92,8 @@ mod vim_registers;
 mod voice;
 mod voltron;
 mod warp_managed_paths_watcher;
+#[cfg(not(target_family = "wasm"))]
+mod warpinator_bridge;
 #[cfg(target_family = "wasm")]
 mod wasm_nux_dialog;
 mod window_settings;
@@ -618,6 +620,23 @@ pub fn run() -> Result<()> {
                 eprintln!("Error: Invalid session sharing server URL: {e:#}");
             }
         }
+    }
+
+    // warpinator: on the OSS build, auto-start the local bridge and point the client at it
+    // unless the user already specified a server URL. Zero-setup account-free AI.
+    // Override dir with WARPINATOR_BRIDGE_DIR, port with WARPINATOR_BRIDGE_PORT (default 8787),
+    // or opt out with WARPINATOR_NO_AUTOSPAWN=1.
+    #[cfg(not(target_family = "wasm"))]
+    if matches!(ChannelState::channel(), warp_core::channel::Channel::Oss)
+        && args.server_root_url().is_none()
+        && std::env::var_os("WARPINATOR_NO_AUTOSPAWN").is_none()
+    {
+        let port = std::env::var("WARPINATOR_BRIDGE_PORT").unwrap_or_else(|_| "8787".to_string());
+        warpinator_bridge::ensure_started(&port);
+        if let Err(e) = ChannelState::override_server_root_url(format!("http://127.0.0.1:{port}")) {
+            eprintln!("warpinator: invalid bridge URL: {e:#}");
+        }
+        let _ = ChannelState::override_ws_server_url(format!("ws://127.0.0.1:{port}/graphql/v2"));
     }
 
     if let Some(command) = args.command() {

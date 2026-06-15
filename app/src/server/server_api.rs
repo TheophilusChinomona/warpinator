@@ -1294,11 +1294,10 @@ impl ServerApi {
         request: &warp_multi_agent_api::Request,
     ) -> std::result::Result<AIOutputStream<warp_multi_agent_api::ResponseEvent>, Arc<AIApiError>>
     {
-        let auth_token = self
-            .get_or_refresh_access_token()
-            .await
-            .map_err(Into::into)
-            .map_err(Arc::new)?;
+        // warpinator: AI does not require a Warp account. If there's no access token
+        // (logged out), proceed without one and let the local warpinator bridge handle
+        // auth via the user's own provider API keys.
+        let auth_token = self.get_or_refresh_access_token().await.ok();
 
         let is_passive = request.input.as_ref().is_some_and(|input| {
             matches!(
@@ -1323,10 +1322,11 @@ impl ServerApi {
             // read from the main conversation, but cannot modify it.
             None
         } else {
+            // warpinator: tolerate missing auth — no ambient workload token when logged out.
             self.get_or_create_ambient_workload_token()
                 .await
-                .map_err(Into::into)
-                .map_err(Arc::new)?
+                .ok()
+                .flatten()
         };
 
         let mut request_builder = self
@@ -1334,7 +1334,7 @@ impl ServerApi {
             .post(url)
             .proto(request)
             .prevent_sleep("Agent Mode request in-progress");
-        if let Some(token) = auth_token.as_bearer_token() {
+        if let Some(token) = auth_token.as_ref().and_then(|t| t.as_bearer_token()) {
             request_builder = request_builder.bearer_auth(token);
         }
 
