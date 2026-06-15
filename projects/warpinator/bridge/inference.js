@@ -291,4 +291,19 @@ async function runInference(reqObj, { onDelta, onToolCall, onError, onDone } = {
   }
 }
 
-module.exports = { runInference, loadApiKey, buildContext, PROVIDER, DEFAULT_MODEL };
+// Turn a raw provider/SDK error into an actionable, user-facing message.
+function classifyError(err) {
+  const msg = (err && err.message) || String(err);
+  const low = msg.toLowerCase();
+  if (low.includes("key") && (low.includes("no ") || low.includes("missing")))
+    return 'No API key configured. Add your OpenRouter key to ~/.pi/agent/auth.json ({"openrouter":{"key":"sk-or-..."}}) or set OPENROUTER_API_KEY, then retry.';
+  if (low.includes("401") || low.includes("unauthorized") || low.includes("invalid api key"))
+    return "The provider rejected the API key (401). Check your OpenRouter key.";
+  if (low.includes("429") || low.includes("rate limit") || low.includes("quota") || low.includes("too many requests"))
+    return "Rate limited by the provider (429). Wait a moment or switch models (free-tier models throttle aggressively).";
+  if ((low.includes("model")) && (low.includes("not found") || low.includes("unknown") || low.includes("404")))
+    return "That model isn't available on OpenRouter right now. Pick a different model in the picker.";
+  return `warpinator bridge error: ${msg}`;
+}
+
+module.exports = { runInference, loadApiKey, buildContext, classifyError, PROVIDER, DEFAULT_MODEL };
