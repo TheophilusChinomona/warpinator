@@ -5,8 +5,8 @@
 // response for Pi-driven inference.
 const http = require("http");
 const { loadSchema } = require("./proto_loader");
-const { runInference, classifyError, PROVIDER, DEFAULT_MODEL } = require("./inference");
-const { handleGraphql, MODELS } = require("./graphql");
+const { runInference, classifyError, loadApiKey, PROVIDER, DEFAULT_MODEL } = require("./inference");
+const { handleGraphql, refreshCatalog } = require("./graphql");
 
 const PORT = process.env.WARPINATOR_BRIDGE_PORT || 8787;
 const { ResponseEvent, Request } = loadSchema();
@@ -185,7 +185,7 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     const gql = handleGraphql(body.toString("utf8"));
     if (gql) {
-      console.log(`  graphql: served freeAvailableModels (${MODELS.length} models)`);
+      console.log("  graphql: served freeAvailableModels");
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(gql));
       return;
@@ -204,4 +204,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, "127.0.0.1", () => {
   console.log(`warpinator bridge (Phase 3: Pi streaming + tools via ${PROVIDER}/${DEFAULT_MODEL}) on http://127.0.0.1:${PORT}`);
   console.log(`Point Warp at it:  WARP_SERVER_ROOT_URL=http://127.0.0.1:${PORT} ./target/debug/warp-oss`);
+  refreshCatalog(loadApiKey({})).then((n) =>
+    console.log(n ? `catalog: loaded ${n} OpenRouter models` : "catalog: using pinned models (fetch failed)")
+  );
 });

@@ -104,4 +104,33 @@ function handleGraphql(bodyText) {
   return null;
 }
 
-module.exports = { handleGraphql, buildChoicesFromOpenRouter, PINNED, MODELS: PINNED, DEFAULT_ID, setActiveModels };
+const https = require("https");
+
+// Fetch OpenRouter's model list and install it as the active picker list.
+// Best-effort: on any failure the pinned list remains.
+function refreshCatalog(apiKey) {
+  return new Promise((resolve) => {
+    const req = https.request(
+      { host: "openrouter.ai", path: "/api/v1/models", method: "GET", headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} },
+      (res) => {
+        let body = "";
+        res.on("data", (c) => (body += c));
+        res.on("end", () => {
+          try {
+            const data = JSON.parse(body).data || [];
+            const choices = buildChoicesFromOpenRouter(data);
+            setActiveModels(choices);
+            resolve(choices.length);
+          } catch (_) {
+            resolve(0);
+          }
+        });
+      }
+    );
+    req.on("error", () => resolve(0));
+    req.setTimeout(8000, () => { req.destroy(); resolve(0); });
+    req.end();
+  });
+}
+
+module.exports = { handleGraphql, buildChoicesFromOpenRouter, PINNED, MODELS: PINNED, DEFAULT_ID, setActiveModels, refreshCatalog };
