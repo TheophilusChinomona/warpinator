@@ -5,7 +5,7 @@
 // response for Pi-driven inference.
 const http = require("http");
 const { loadSchema } = require("./proto_loader");
-const { runInference, PROVIDER, DEFAULT_MODEL } = require("./inference");
+const { runInference, classifyError, PROVIDER, DEFAULT_MODEL } = require("./inference");
 const { handleGraphql, MODELS } = require("./graphql");
 
 const PORT = process.env.WARPINATOR_BRIDGE_PORT || 8787;
@@ -124,7 +124,7 @@ async function handleMultiAgent(req, res, body) {
           {
             add_messages_to_task: {
               task_id,
-              messages: [{ id: nextId("msg"), task_id, agent_output: { text: `⚠️ warpinator (${PROVIDER}/${DEFAULT_MODEL}): ${errored.message}` } }],
+              messages: [{ id: nextId("msg"), task_id, agent_output: { text: `⚠️ ${classifyError(errored)}` } }],
             },
           },
         ],
