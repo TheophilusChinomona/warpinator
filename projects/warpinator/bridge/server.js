@@ -202,7 +202,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  console.log(`warpinator bridge (Phase 3: Pi streaming + tools via ${PROVIDER}/${DEFAULT_MODEL}) on http://127.0.0.1:${PORT}`);
+  console.log(`warpinator bridge (Pi streaming + tools; default ${DEFAULT_MODEL} via ${PROVIDER}) on http://127.0.0.1:${PORT}`);
   console.log(`Point Warp at it:  WARP_SERVER_ROOT_URL=http://127.0.0.1:${PORT} ./target/debug/warp-oss`);
   refreshCatalog(loadApiKey({})).then((n) =>
     console.log(n ? `catalog: loaded ${n} OpenRouter models` : "catalog: using pinned models (fetch failed)")

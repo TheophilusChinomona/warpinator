@@ -273,7 +273,7 @@ async function runInference(reqObj, { onDelta, onToolCall, onError, onDone } = {
       console.warn(`  model '${requestedId}' unknown to pi-ai; falling back to ${DEFAULT_MODEL}`);
       model = getModel(PROVIDER, DEFAULT_MODEL);
     }
-    console.log(`  inference: ${PROVIDER}/${requestedId}, ${context.messages.length} msg(s), ${context.tools.length} tool(s)`);
+    console.log(`  inference: ${requestedId} (${PROVIDER}), ${context.messages.length} msg(s), ${context.tools.length} tool(s)`);
     const events = stream(model, context, { apiKey });
     for await (const evt of events) {
       if (evt.type === "text_delta" && evt.delta) {

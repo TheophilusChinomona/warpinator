@@ -133,4 +133,4 @@ function refreshCatalog(apiKey) {
   });
 }
 
-module.exports = { handleGraphql, buildChoicesFromOpenRouter, PINNED, MODELS: PINNED, DEFAULT_ID, setActiveModels, refreshCatalog };
+module.exports = { handleGraphql, buildChoicesFromOpenRouter, PINNED, DEFAULT_ID, setActiveModels, refreshCatalog };
