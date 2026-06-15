@@ -14,11 +14,13 @@ cargo build --bin warp-oss --features gui     # needs protoc on PATH
 #    ~/.pi/agent/auth.json  ->  { "openrouter": { "key": "sk-or-..." } }
 #    (or set OPENROUTER_API_KEY)
 
-# 3. Run it (starts the bridge + launches Warp, account-free)
-projects/warpinator/run.sh
+# 3. Run it — the OSS build auto-starts the bridge and points at it
+./target/debug/warp-oss
+#    (or use the explicit launcher: projects/warpinator/run.sh)
+#    opt out of auto-spawn with WARPINATOR_NO_AUTOSPAWN=1
 
-# pick a model:
-BRIDGE_MODEL=anthropic/claude-haiku-4.5 projects/warpinator/run.sh
+# pick a model: choose it in the in-app model picker, or:
+BRIDGE_MODEL=anthropic/claude-haiku-4.5 ./target/debug/warp-oss
 ```
 
 Then in Warp: you land straight in the terminal (no login), Agent Mode is available, and the model picker lists OpenRouter models (Owl Alpha, OpenRouter Free, Claude, Gemini, …).
