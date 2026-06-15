@@ -8,19 +8,46 @@
 // get_feature_model_choices}.rs exactly (cynic camelCases field names; the
 // FreeAvailableModelsResult union needs __typename).
 
-// Curated models. `id` MUST be a model id pi-ai knows for the "openrouter" provider
-// (see node_modules/@mariozechner/pi-ai/dist/models.generated.js).
-const MODELS = [
+// Pinned models always shown first (ids must be pi-ai openrouter ids).
+const PINNED = [
   { id: "openrouter/owl-alpha", base: "owl-alpha", name: "Owl Alpha", provider: "UNKNOWN", desc: "OpenRouter cloaked model (warpinator default)" },
-  { id: "openrouter/free", base: "free", name: "OpenRouter Free", provider: "UNKNOWN", desc: "OpenRouter's free auto-router (no cost; may be rate-limited)" },
-  { id: "openrouter/auto", base: "auto", name: "OpenRouter Auto", provider: "UNKNOWN", desc: "OpenRouter auto-router (picks a model per request)" },
-  { id: "anthropic/claude-haiku-4.5", base: "claude-haiku-4.5", name: "Claude Haiku 4.5", provider: "ANTHROPIC", desc: "Fast, low-cost Anthropic" },
-  { id: "anthropic/claude-3.5-haiku", base: "claude-3.5-haiku", name: "Claude 3.5 Haiku", provider: "ANTHROPIC", desc: "Cheap, capable" },
-  { id: "google/gemini-2.5-flash", base: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: "GOOGLE", desc: "Fast Google model" },
-  { id: "google/gemini-2.5-pro", base: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: "GOOGLE", desc: "High-quality Google model" },
+  { id: "openrouter/free", base: "free", name: "OpenRouter Free", provider: "UNKNOWN", desc: "OpenRouter's free auto-router (rate-limited)" },
+  { id: "openrouter/auto", base: "auto", name: "OpenRouter Auto", provider: "UNKNOWN", desc: "OpenRouter auto-router" },
 ];
 
 const DEFAULT_ID = "openrouter/owl-alpha";
+
+function providerFromId(id) {
+  const org = (id.split("/")[0] || "").toLowerCase();
+  if (org.includes("anthropic")) return "ANTHROPIC";
+  if (org.includes("openai")) return "OPENAI";
+  if (org.includes("google")) return "GOOGLE";
+  if (org.includes("x-ai") || org.includes("xai")) return "XAI";
+  return "UNKNOWN";
+}
+
+// Map OpenRouter /models payload entries to picker choices, pinned first, deduped.
+function buildChoicesFromOpenRouter(apiModels) {
+  const choices = [...PINNED];
+  const seen = new Set(PINNED.map((p) => p.id));
+  for (const m of apiModels || []) {
+    if (!m || !m.id || seen.has(m.id)) continue;
+    seen.add(m.id);
+    choices.push({
+      id: m.id,
+      base: m.id.split("/").slice(1).join("/") || m.id,
+      name: m.name || m.id,
+      provider: providerFromId(m.id),
+      desc: (m.description || "").slice(0, 140) || undefined,
+    });
+  }
+  return choices;
+}
+
+let activeModels = PINNED;
+function setActiveModels(choices) {
+  if (Array.isArray(choices) && choices.length) activeModels = choices;
+}
 
 function llmInfo(m) {
   return {
@@ -41,7 +68,7 @@ function llmInfo(m) {
 }
 
 function availableLlms() {
-  return { defaultId: DEFAULT_ID, choices: MODELS.map(llmInfo), preferredCodexModelId: null };
+  return { defaultId: DEFAULT_ID, choices: activeModels.map(llmInfo), preferredCodexModelId: null };
 }
 
 function featureModelChoice() {
@@ -77,4 +104,4 @@ function handleGraphql(bodyText) {
   return null;
 }
 
-module.exports = { handleGraphql, MODELS, DEFAULT_ID };
+module.exports = { handleGraphql, buildChoicesFromOpenRouter, PINNED, MODELS: PINNED, DEFAULT_ID, setActiveModels };
