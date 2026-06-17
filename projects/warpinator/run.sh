@@ -23,6 +23,12 @@ BRIDGE_LOG="${TMPDIR:-/tmp}/warpinator-bridge.log"
 log() { printf '\033[36m[warpinator]\033[0m %s\n' "$*"; }
 die() { printf '\033[31m[warpinator] %s\033[0m\n' "$*" >&2; exit 1; }
 
+# Force the OpenGL wgpu backend. On Intel integrated GPUs (HD 630 / Kaby Lake)
+# the Vulkan backend intermittently corrupts the glyph atlas, garbling all text;
+# it never self-heals since wgpu reports no error. GL avoids it. Override with
+# `WGPU_BACKEND=vulkan projects/warpinator/run.sh`.
+export WGPU_BACKEND="${WGPU_BACKEND:-gl}"
+
 command -v node >/dev/null || die "node is required (the bridge runs on Node)."
 [ -x "$WARP_BIN" ] || die "warp-oss not built. Run: cargo build --bin warp-oss --features gui"
 
