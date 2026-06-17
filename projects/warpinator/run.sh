@@ -34,7 +34,7 @@ fi
 
 # 2. bridge (start only if nothing is already serving the port)
 STARTED_BRIDGE=0
-if curl -s -o /dev/null -m 2 "http://127.0.0.1:${PORT}/healthz" 2>/dev/null; then
+if [ "$(curl -s -o /dev/null -w '%{http_code}' -m 2 "http://127.0.0.1:${PORT}/healthz" 2>/dev/null)" = "200" ]; then
   log "bridge already running on :${PORT}"
 else
   log "starting bridge on :${PORT} (log: ${BRIDGE_LOG})"

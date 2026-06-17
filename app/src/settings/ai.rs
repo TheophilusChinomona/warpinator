@@ -27,7 +27,6 @@ use warpui::platform::OperatingSystem;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity, UpdateModel};
 
 use crate::ai::request_usage_model::RequestLimitInfo;
-use crate::auth::AuthStateProvider;
 use crate::report_if_error;
 use crate::settings::PrivacySettings;
 use crate::terminal::CLIAgent;

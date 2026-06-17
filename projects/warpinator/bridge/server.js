@@ -174,6 +174,12 @@ const server = http.createServer(async (req, res) => {
   const url = (req.url || "").split("?")[0];
   console.log(`${req.method} ${url}`);
 
+  if (req.method === "GET" && url === "/healthz") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok", bridge: "warpinator" }));
+    return;
+  }
+
   if (req.method === "POST" && (url === "/ai/multi-agent" || url === "/agent-mode-evals/multi-agent")) {
     const body = await readBody(req);
     return handleMultiAgent(req, res, body);

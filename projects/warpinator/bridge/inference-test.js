@@ -10,12 +10,14 @@ const fakeRequest = {
 
 (async () => {
   console.log(`Testing ${PROVIDER}/${DEFAULT_MODEL}...\n`);
-  process.stdout.write("REPLY: ");
-  const text = await runInference(fakeRequest, {
-    onDelta: (d) => process.stdout.write(d),
-    onError: (e) => console.error(`\nERROR: ${e.message}`),
+  let text = "";
+  let errored = null;
+  await runInference(fakeRequest, {
+    onDelta: (d) => { text += d; process.stdout.write(d); },
+    onError: (e) => { errored = e; console.error(`\nERROR: ${e.message}`); },
   });
   console.log("\n");
-  console.log(text && !text.startsWith("⚠️") ? "INFERENCE OK ✓" : "INFERENCE FAILED ✗");
-  process.exit(text && !text.startsWith("⚠️") ? 0 : 1);
+  const ok = !errored && text.length > 0 && !text.startsWith("⚠️");
+  console.log(ok ? "INFERENCE OK ✓" : "INFERENCE FAILED ✗");
+  process.exit(ok ? 0 : 1);
 })();
