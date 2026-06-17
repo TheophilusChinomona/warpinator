@@ -281,19 +281,47 @@ async function runInference(reqObj, { onDelta, onToolCall, onError, onDone } = {
       } else if (evt.type === "toolcall_end" && evt.toolCall) {
         onToolCall && onToolCall(evt.toolCall);
       } else if (evt.type === "error") {
-        throw new Error(evt.error || "stream error");
+        let errText;
+        if (typeof evt.error === "string") {
+          errText = evt.error;
+        } else if (evt.error && typeof evt.error.errorMessage === "string") {
+          errText = evt.error.errorMessage;
+        } else if (evt.error && typeof evt.error.message === "string") {
+          errText = evt.error.message;
+        } else {
+          errText = JSON.stringify(evt.error);
+        }
+        throw new Error(errText || "stream error");
+      } else if (evt.type === "assistant" && evt.stopReason === "error") {
+        const errText = evt.errorMessage || JSON.stringify(evt);
+        throw new Error(errText || "model stopped with error");
       }
     }
     onDone && onDone();
   } catch (e) {
-    console.warn(`  inference error: ${e.message}`);
+    const errMsg = e && typeof e.message === "string" ? e.message : JSON.stringify(e);
+    console.warn(`  inference error: ${errMsg}`);
     onError && onError(e);
   }
 }
 
 // Turn a raw provider/SDK error into an actionable, user-facing message.
 function classifyError(err) {
-  const msg = (err && err.message) || String(err);
+  let msg;
+  if (err && typeof err.message === "string") {
+    msg = err.message;
+  } else if (typeof err === "string") {
+    msg = err;
+  } else {
+    try { msg = JSON.stringify(err); } catch (_) { msg = String(err); }
+  }
+  // If the message is a JSON blob with errorMessage, extract it.
+  if (msg.startsWith("{") && msg.includes("errorMessage")) {
+    try {
+      const parsed = JSON.parse(msg);
+      if (parsed.errorMessage) msg = parsed.errorMessage;
+    } catch (_) {}
+  }
   const low = msg.toLowerCase();
   if (low.includes("key") && (low.includes("no ") || low.includes("missing")))
     return 'No API key configured. Add your OpenRouter key to ~/.pi/agent/auth.json ({"openrouter":{"key":"sk-or-..."}}) or set OPENROUTER_API_KEY, then retry.';
