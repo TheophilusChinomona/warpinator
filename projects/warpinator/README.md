@@ -14,13 +14,25 @@ cargo build --bin warp-oss --features gui     # needs protoc on PATH
 #    ~/.pi/agent/auth.json  ->  { "openrouter": { "key": "sk-or-..." } }
 #    (or set OPENROUTER_API_KEY)
 
-# 3. Run it — the OSS build auto-starts the bridge and points at it
+# 3. Run it — the OSS build auto-stawns the bridge and points at it
 ./target/debug/warp-oss
 #    (or use the explicit launcher: projects/warpinator/run.sh)
 #    opt out of auto-spawn with WARPINATOR_NO_AUTOSPAWN=1
 
 # pick a model: choose it in the in-app model picker, or:
 BRIDGE_MODEL=anthropic/claude-haiku-4.5 ./target/debug/warp-oss
+```
+
+### Desktop / app-menu install (optional)
+
+```bash
+# Copy the launcher script and .desktop entry
+mkdir -p ~/.local/bin ~/.local/share/applications
+cp projects/warpinator/warpinator ~/.local/bin/
+chmod +x ~/.local/bin/warpinator
+sed "s|REPLACE_WITH_HOME|$HOME|g; s|REPLACE_WITH_REPO|$(pwd)|g" \
+  projects/warpinator/warpinator.desktop > ~/.local/share/applications/warpinator.desktop
+# Now it appears in your app menu and can be pinned to the dock.
 ```
 
 Then in Warp: you land straight in the terminal (no login), Agent Mode is available, and the model picker lists OpenRouter models (Owl Alpha, OpenRouter Free, Claude, Gemini, …).
@@ -31,7 +43,7 @@ Then in Warp: you land straight in the terminal (no login), Agent Mode is availa
 - **Your provider, your key** — OpenRouter by default (key from Pi's `~/.pi/agent/auth.json` or Warp's AI settings).
 - **Streaming** replies, token-by-token.
 - **Tools** — Owl can run shell commands *and* read/edit files: `run_shell_command`, `read_files`, `apply_file_diffs` (search/replace, new files, deletes), `grep`, `file_glob`. Tools execute **in your real terminal** (cwd, diff UI, your approval).
-- **Model picker** — choose the model in-app; the selection is honored per request.
+- **Model picker** — choose from 300+ OpenRouter models in-app; selection honored per request.
 
 ## Architecture
 
@@ -71,12 +83,16 @@ Plus the Node bridge: `projects/warpinator/bridge/{server,inference,graphql,prot
 - `docs/PHASE3-STREAMING-TOOLS.md` — streaming, tools, key wiring.
 - `PLANNING.md` — overall plan.
 
+## Known issues
+
+- **Intel integrated GPU garbling** — On some Intel iGPUs (HD 630, Mesa 25.2+) the Vulkan backend intermittently corrupts the glyph atlas, garbling all text. The launcher forces `WGPU_BACKEND=gl` by default to sidestep this. Override with `WGPU_BACKEND=vulkan warpinator` if you want to test or have a discrete GPU.
+- Free-tier models can be rate-limited.
+
 ## Limitations / next
 
-- Bridge runs as a separate Node process (via `run.sh`); native auto-spawn + bundling is future work.
-- Model picker list is curated in `bridge/graphql.js` (not the full OpenRouter catalog).
 - UI still says "Warp" (rebrand pending).
-- Free-tier models can be rate-limited.
+- Full app bundling (ship Node runtime + installer) is future work.
+- Remote-FS / SSH file browsing (spike documented, not yet implemented).
 
 ## License
 
