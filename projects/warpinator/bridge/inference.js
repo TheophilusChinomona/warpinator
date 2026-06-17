@@ -251,7 +251,61 @@ function resolveModelId(reqObj) {
   return DEFAULT_MODEL;
 }
 
-// Stream a completion. Callbacks: onDelta(text), onToolCall(piToolCall), onError(Error), onDone().
+// Single inference attempt (no retries). Returns true on success.
+async function _runInferenceOnce(reqObj, apiKey, { onDelta, onToolCall, onDone } = {}) {
+  const context = buildContext(reqObj);
+  const { getModel, stream } = await getPi();
+  const requestedId = resolveModelId(reqObj);
+  let model;
+  try {
+    model = getModel(PROVIDER, requestedId);
+  } catch (_) {
+    console.warn(`  model '${requestedId}' unknown to pi-ai; falling back to ${DEFAULT_MODEL}`);
+    model = getModel(PROVIDER, DEFAULT_MODEL);
+  }
+  console.log(`  inference: ${requestedId} (${PROVIDER}), ${context.messages.length} msg(s), ${context.tools.length} tool(s)`);
+  const events = stream(model, context, { apiKey });
+  for await (const evt of events) {
+    if (evt.type === "text_delta" && evt.delta) {
+      onDelta && onDelta(evt.delta);
+    } else if (evt.type === "toolcall_end" && evt.toolCall) {
+      onToolCall && onToolCall(evt.toolCall);
+    } else if (evt.type === "error") {
+      let errText;
+      if (typeof evt.error === "string") {
+        errText = evt.error;
+      } else if (evt.error && typeof evt.error.errorMessage === "string") {
+        errText = evt.error.errorMessage;
+      } else if (evt.error && typeof evt.error.message === "string") {
+        errText = evt.error.message;
+      } else {
+        errText = JSON.stringify(evt.error);
+      }
+      throw new Error(errText || "stream error");
+    } else if (evt.type === "assistant" && evt.stopReason === "error") {
+      const errText = evt.errorMessage || JSON.stringify(evt);
+      throw new Error(errText || "model stopped with error");
+    }
+  }
+  onDone && onDone();
+  return true;
+}
+
+// Whether an error is retryable (transient provider hiccup) vs fatal (bad key, bad model).
+function isRetryableError(err) {
+  const msg = (err && err.message) || String(err);
+  const low = msg.toLowerCase();
+  // Don't retry auth failures or missing keys.
+  if (low.includes("401") || low.includes("unauthorized") || low.includes("invalid api key")) return false;
+  if (low.includes("key") && (low.includes("no ") || low.includes("missing"))) return false;
+  // Don't retry "model not found" — that's a config issue.
+  if (low.includes("model") && low.includes("not found")) return false;
+  // Everything else (429, 500, "provider returned error", timeouts, etc.) is retryable.
+  return true;
+}
+
+// Stream a completion with automatic retry on transient provider errors.
+// Callbacks: onDelta(text), onToolCall(piToolCall), onError(Error), onDone().
 async function runInference(reqObj, { onDelta, onToolCall, onError, onDone } = {}) {
   const apiKey = loadApiKey(reqObj);
   if (!apiKey) {
@@ -263,46 +317,29 @@ async function runInference(reqObj, { onDelta, onToolCall, onError, onDone } = {
     onError && onError(new Error("Request contained no user message or tool result"));
     return;
   }
-  try {
-    const { getModel, stream } = await getPi();
-    const requestedId = resolveModelId(reqObj);
-    let model;
-    try {
-      model = getModel(PROVIDER, requestedId);
-    } catch (_) {
-      console.warn(`  model '${requestedId}' unknown to pi-ai; falling back to ${DEFAULT_MODEL}`);
-      model = getModel(PROVIDER, DEFAULT_MODEL);
+
+  const MAX_RETRIES = 2;
+  let lastError = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const delayMs = attempt * 1000;
+      console.log(`  retry ${attempt}/${MAX_RETRIES} after ${delayMs}ms...`);
+      await new Promise((r) => setTimeout(r, delayMs));
     }
-    console.log(`  inference: ${requestedId} (${PROVIDER}), ${context.messages.length} msg(s), ${context.tools.length} tool(s)`);
-    const events = stream(model, context, { apiKey });
-    for await (const evt of events) {
-      if (evt.type === "text_delta" && evt.delta) {
-        onDelta && onDelta(evt.delta);
-      } else if (evt.type === "toolcall_end" && evt.toolCall) {
-        onToolCall && onToolCall(evt.toolCall);
-      } else if (evt.type === "error") {
-        let errText;
-        if (typeof evt.error === "string") {
-          errText = evt.error;
-        } else if (evt.error && typeof evt.error.errorMessage === "string") {
-          errText = evt.error.errorMessage;
-        } else if (evt.error && typeof evt.error.message === "string") {
-          errText = evt.error.message;
-        } else {
-          errText = JSON.stringify(evt.error);
-        }
-        throw new Error(errText || "stream error");
-      } else if (evt.type === "assistant" && evt.stopReason === "error") {
-        const errText = evt.errorMessage || JSON.stringify(evt);
-        throw new Error(errText || "model stopped with error");
+    try {
+      await _runInferenceOnce(reqObj, apiKey, { onDelta, onToolCall, onDone });
+      return; // success
+    } catch (e) {
+      lastError = e;
+      const errMsg = e && typeof e.message === "string" ? e.message : JSON.stringify(e);
+      console.warn(`  inference error (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${errMsg}`);
+      if (!isRetryableError(e)) {
+        console.warn(`  error is not retryable, aborting.`);
+        break;
       }
     }
-    onDone && onDone();
-  } catch (e) {
-    const errMsg = e && typeof e.message === "string" ? e.message : JSON.stringify(e);
-    console.warn(`  inference error: ${errMsg}`);
-    onError && onError(e);
   }
+  onError && onError(lastError);
 }
 
 // Turn a raw provider/SDK error into an actionable, user-facing message.
