@@ -1,7 +1,7 @@
 # warpinator — Remote Filesystem (Wave-style) Design
 
 **Date:** 2026-06-18
-**Status:** Approved
+**Status:** Approved — revised after independent code review
 **Goal:** When you `ssh user@host` inside Warpinator, the Project Explorer, file tree, and editor all work on the remote filesystem — identical to Wave Terminal's experience — with no Warp account required.
 
 ---
@@ -18,23 +18,31 @@ When you type `ssh user@host` in a Warp/Warpinator terminal session, the client 
 
 1. **Server-side download (first attempt):** Runs `install_remote_server.sh` on the remote, which tries to `curl {server_root_url}/download/cli?...` — for us that's `http://127.0.0.1:8787/download/cli`. The remote host can't reach the local machine's loopback port, so curl fails with a non-2 exit code.
 2. **SCP fallback (automatic):** `scp_fallback::should_try_install()` returns `true` for any exit code that isn't 2 (unsupported arch/OS), so the client falls back to the SCP upload path. It checks `~/.cache/Warp-Oss/remote-server/tarballs/unversioned/linux-x86_64/oz.tar.gz` locally. If that file exists, it uploads it over the existing SSH connection and runs extraction. If that file doesn't exist, it tries to download it from `download_tarball_url()`.
-3. **Daemon starts:** The script extracts the tarball, finds the `oz*` binary, installs it as `~/.warp/remote-server/warp-oss` on the remote, and launches `warp-oss remote-server-daemon`. The local client speaks a length-prefixed protobuf-over-SSH-stdio protocol to it.
-4. **UI lights up:** `LocalOrRemotePath`, the remote file tree (`remote_host_id`), and `ReadFileContextRequest` (editor open) are already fully wired in Warp's UI — no new UI code needed.
+3. **Daemon starts:** The script extracts the tarball, finds the `oz*` binary, installs it as `~/.warp-dev/remote-server/warp-oss` on the remote (see OSS channel note below), and launches `warp-oss remote-server-daemon`. The local client speaks a length-prefixed protobuf-over-SSH-stdio protocol to it. The post-install step runs `warp-oss --version` to verify the binary is functional; failure here (e.g. glibc mismatch) surfaces as "Post-install verification failed" and aborts the connection.
+4. **Daemon persists across disconnects:** The daemon is spawned with `setsid()` (`proxy.rs:183`) and a flock/PID-file (`proxy.rs:134-149`) so it outlives the SSH session and is reused on reconnect. A stale running daemon from an older binary will NOT be replaced by re-staging alone — it must be killed on the remote first (`pkill warp-oss`).
+5. **UI lights up:** `LocalOrRemotePath`, the remote file tree (`remote_host_id`), and `ReadFileContextRequest` (editor open) are already fully wired in Warp's UI — no new UI code needed.
 
 **Key code locations:**
 - `app/src/remote_server/ssh_transport/installation.rs` — two-step install: server-side → SCP fallback
-- `app/src/remote_server/ssh_transport/installation/scp_fallback.rs` — `cached_remote_server_tarball()` short-circuits to the cached file when it exists
+- `app/src/remote_server/ssh_transport/installation/scp_fallback.rs` — `cached_remote_server_tarball()` short-circuits to the cached file when it exists; `is_valid_cached_tarball()` only checks `len > 0` (no integrity verification)
 - `crates/remote_server/src/setup.rs:536` — `remote_server_artifact_version()` returns `"unversioned"` for `Channel::Oss`
 - `crates/warp_core/src/channel/mod.rs:62` — `cli_command_name()` returns `"warp-oss"` for `Channel::Oss`
 - `crates/remote_server/src/setup.rs:642` — `download_tarball_url()` — Phase 2 changes this for OSS
+- `app/src/remote_server/unix/proxy.rs:101` — daemon lifecycle: flock serialisation, setsid, PID reuse
 
-**Tarball layout requirement:** The install script searches for `find … -name 'oz*'` to locate the executable, then renames it to `{binary_name}` (`warp-oss` for OSS) at install. So the binary inside the tarball must be named `oz` (not `warp-oss`).
+**OSS channel rides the `dev` arms (important):** `remote_server_dir()` for `Channel::Oss` currently returns `".warp-dev"` (setup.rs:349-352, `TODO(alokedesai)` comment). This means the install path on the remote is `~/.warp-dev/remote-server/warp-oss`, not `~/.warp/`. Similarly, `download_channel()` returns `"dev"` for OSS (setup.rs:620-624). This is inherited upstream debt; the spec does not change it.
+
+**Tarball layout requirement:** The install script searches `find … -name 'oz*' ! -name '*.tar.gz'` to locate the executable, then renames it to `{binary_name}` (`warp-oss` for OSS) at install. So the binary inside the tarball must be named `oz` (not `warp-oss`). The `! -name '*.tar.gz'` guard also prevents matching orphaned `oz-upload-{uuid}.tar.gz` files if any exist in the temp dir.
 
 **Cache path on Linux (OSS build):**
 ```
 ~/.cache/Warp-Oss/remote-server/tarballs/unversioned/linux-x86_64/oz.tar.gz
 ```
 (`cache_dir()` → `~/.cache/Warp-Oss/` on Linux via `directories::ProjectDirs` with app name `"Warp-Oss"`)
+
+**Orphaned upload tarballs:** On SCP upload success followed by install-script failure, `oz-upload-{uuid}.tar.gz` is left in `~/.warp-dev/remote-server/` on the remote. Each retry adds another UUID copy. The spec accepts this; clean up manually with `rm ~/.warp-dev/remote-server/oz-upload-*.tar.gz` if needed.
+
+**Security / trust model:** Neither the SCP path nor the GitHub download path performs a checksum or signature check on the tarball — `is_valid_cached_tarball()` only verifies `len > 0`. Transport integrity on the Phase 2 GitHub download is provided by HTTPS only. The threat model is: you control the GitHub repo (only you can push release assets) and the remote hosts are your own servers (only you can SSH in). No third-party CDN is involved. This is acceptable for a single-operator fork; a future hardening step could add a `oz-linux-x86_64.tar.gz.sha256` release asset and verify before SCP upload.
 
 ---
 
@@ -57,6 +65,9 @@ When you type `ssh user@host` in a Warp/Warpinator terminal session, the client 
 # Packages warp-oss as the remote-server daemon tarball and stages it at the
 # local SCP-fallback cache path so Warpinator can upload it when SSHing into
 # a remote host without a Warp account or CDN access.
+#
+# OSS channel only — targets linux-x86_64 (the channel's binary_name is
+# "warp-oss" and remote_server_dir() returns ".warp-dev"; see setup.rs:349).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -73,19 +84,30 @@ TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
 cp "$BINARY" "$TMPDIR/oz"
-strip "$TMPDIR/oz"
+# strip is a size optimization (~950MB debug → ~50MB release+stripped).
+# It is safe on a dynamically-linked Rust binary and does not affect --version.
+# Guard: if strip is not installed, proceed without it (binary is larger but functional).
+if command -v strip >/dev/null 2>&1; then
+  strip "$TMPDIR/oz"
+else
+  echo "warning: strip not found — binary will be larger" >&2
+fi
 tar czf "$TMPDIR/oz.tar.gz" -C "$TMPDIR" oz
 
 mkdir -p "$CACHE_DIR"
 mv "$TMPDIR/oz.tar.gz" "$CACHE_PATH"
 
-echo "Staged remote-server tarball at $CACHE_PATH ($(du -sh "$CACHE_PATH" | cut -f1))"
+SIZE="$(du -sh "$CACHE_PATH" 2>/dev/null | cut -f1 || stat -c%s "$CACHE_PATH")"
+echo "Staged remote-server tarball at $CACHE_PATH ($SIZE)"
+echo "NOTE: if a daemon is already running on a remote, kill it first (pkill warp-oss) so Warpinator picks up the new binary on reconnect."
 ```
 
 **After running this once**, every `ssh apps@client-apps` in Warpinator:
 1. Tries server-side download → fails (remote can't reach `127.0.0.1:8787`)
-2. SCP fallback finds the staged tarball → uploads over SSH → installs → daemon starts
-3. Project Explorer shows remote file tree; editor opens remote files
+2. SCP fallback finds the staged tarball → uploads over SSH (timeout: 240s; large binaries over slow DERP relays may time out) → installs to `~/.warp-dev/remote-server/warp-oss` → post-install `--version` verification runs
+3. Daemon starts (or existing daemon reused via flock/PID), Project Explorer shows remote file tree, editor opens remote files
+
+**To update the daemon binary on an already-connected host:** run `stage-remote-server.sh` again, then on the remote: `pkill warp-oss`. Reconnect — Warpinator detects the binary is missing and reinstalls.
 
 ---
 
@@ -124,19 +146,24 @@ pub fn download_tarball_url(platform: &RemotePlatform) -> String {
 
 This function is only called by `cached_remote_server_tarball()` in `scp_fallback.rs` when the local cache is empty. The install script on the remote still tries our bridge URL (and fails), SCP fallback still kicks in, but now it auto-populates the cache from GitHub rather than hard-failing.
 
-### 2b. GitHub Actions release job
+### 2b. GitHub Actions release workflow
 
-**File:** `.github/workflows/warpinator.yml` — add a new job triggered on `v*-warpinator` tags
+**File:** `.github/workflows/warpinator-release.yml` — a **new, separate workflow file** (not a job added to `warpinator.yml`). GitHub Actions triggers are workflow-level; existing jobs inside `warpinator.yml` cannot have independent `on: tags:` triggers. A separate file is the correct approach.
 
-The job reuses the existing build environment from the `build-and-test` job:
-1. Checkout + cache + install deps (same as existing job)
-2. Build: `cargo build --release --bin warp-oss --features gui`
-3. Package: `strip target/release/warp-oss && cp target/release/warp-oss oz && tar czf oz-linux-x86_64.tar.gz oz`
-4. Create GitHub Release and upload `oz-linux-x86_64.tar.gz` via `softprops/action-gh-release`
+Triggered on: `push: tags: ['v*-warpinator']`
 
-**Release asset naming:** `oz-linux-x86_64.tar.gz` — matches the `oz-{os}-{arch}.tar.gz` pattern in the Rust code above.
+Steps:
+1. Checkout + cache + install deps (mirrors `warpinator.yml` build environment)
+2. Pin runner to `ubuntu-24.04` — **not** `ubuntu-latest`. The target remote (Ubuntu 24.04, glibc 2.39) must match the build runner's glibc. If `ubuntu-latest` rolls to 26.04 (glibc 2.40+), a dynamically-linked binary built there will fail on Ubuntu 24.04 remotes with `GLIBC_2.xx not found` — surfacing as a post-install `--version` failure with no clear diagnosis.
+3. Build: `cargo build --release --bin warp-oss --features gui`
+4. Package: `strip target/release/warp-oss && cp target/release/warp-oss oz && tar czf oz-linux-x86_64.tar.gz oz`
+5. Create GitHub Release and upload `oz-linux-x86_64.tar.gz` via `softprops/action-gh-release`
+
+**Release asset naming:** `oz-linux-x86_64.tar.gz` — matches the `oz-{os}-{arch}.tar.gz` pattern in the Rust override above.
 
 **Tagging convention:** `v0.YYYY.MM.DD-warpinator` — distinct from Warp's release tags, safe to push to the fork.
+
+**`releases/latest/download/` note:** Using `latest` means the SCP fallback always downloads the newest release, regardless of what client version is running. This is consistent with `REMOTE_SERVER_ARTIFACT_VERSION_UNPINNED` (OSS is deliberately unpinned) but means protocol skew is possible if a very old client connects after a new release. Acceptable for a single-maintainer fork where both sides are updated together.
 
 ---
 
@@ -144,20 +171,27 @@ The job reuses the existing build environment from the `build-and-test` job:
 
 ```
 Tag push v0.2026.06.18-warpinator
-  → GHA builds + strips warp-oss
+  → GHA (ubuntu-24.04 runner) builds + strips warp-oss
   → packages oz-linux-x86_64.tar.gz
   → uploads to GitHub Release
 
 User SSHs: ssh apps@client-apps in Warpinator
   → install script runs on remote, curl fails (can't reach 127.0.0.1:8787)
-  → SCP fallback checks local cache
-    → cache empty: downloads oz-linux-x86_64.tar.gz from GitHub Releases → caches
+  → SCP fallback checks ~/.cache/Warp-Oss/remote-server/tarballs/unversioned/linux-x86_64/oz.tar.gz
+    → cache empty: downloads from https://github.com/TheophilusChinomona/warpinator/releases/latest/download/oz-linux-x86_64.tar.gz → caches
     → cache hit: uses existing cached tarball
-  → SCP uploads tarball over SSH
-  → installs as ~/.warp/remote-server/warp-oss on remote
-  → daemon starts, speaks protobuf-over-stdio
+  → SCP uploads tarball over SSH (timeout: 240s)
+  → extracts, installs as ~/.warp-dev/remote-server/warp-oss on remote
+  → post-install: warp-oss --version (must succeed; glibc must match)
+  → daemon starts (setsid; survives disconnect), speaks protobuf-over-stdio
   → Project Explorer: remote file tree ✓
   → Editor: open + edit remote files ✓
+
+Binary update flow:
+  → push new tag → GHA uploads new release asset
+  → on remote: pkill warp-oss
+  → delete local cache OR wait — SCP fallback re-downloads when cache is stale/missing
+  → reconnect → reinstalls new binary → daemon restarts
 ```
 
 ---
@@ -184,7 +218,7 @@ User SSHs: ssh apps@client-apps in Warpinator
 |------|--------|
 | `script/stage-remote-server.sh` | New — local staging script (Phase 1) |
 | `crates/remote_server/src/setup.rs` | 8-line change to `download_tarball_url()` for OSS (Phase 2) |
-| `.github/workflows/warpinator.yml` | New release job triggered on `v*-warpinator` tags (Phase 2) |
+| `.github/workflows/warpinator-release.yml` | New workflow triggered on `v*-warpinator` tag push; separate from `warpinator.yml` because GHA triggers are workflow-level (Phase 2) |
 
 No UI changes. No bridge changes. No new Rust crates.
 
