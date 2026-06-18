@@ -1,0 +1,81 @@
+name: warpinator Release
+
+on:
+  push:
+    tags:
+      - 'v*-warpinator'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -C debuginfo=line-tables-only --cfg=web_sys_unstable_apis
+
+jobs:
+  release:
+    name: Build & Publish warpinator remote-server
+    # ubuntu-24.04 is pinned — NOT ubuntu-latest. The remote target (Ubuntu 24.04,
+    # glibc 2.39) must match the runner's glibc. If ubuntu-latest rolls to 26.04
+    # (glibc 2.40+), a dynamically-linked binary fails on Ubuntu 24.04 remotes
+    # with "GLIBC_2.xx not found", surfacing as a post-install --version failure.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: warpinator-release
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config \
+            libssl-dev libfreetype-dev libexpat1-dev libgit2-dev \
+            libfontconfig1-dev libasound2-dev libclang-dev
+
+      - name: Install protoc
+        run: |
+          PROTOC_VERSION="25.1"
+          PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ZIP}"
+          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc 'include/*'
+          rm /tmp/protoc.zip
+          protoc --version
+
+      - name: Install Rust toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add rustfmt clippy
+
+      - name: Build warp-oss (release)
+        run: |
+          cargo build --release --bin warp-oss --features gui
+
+      - name: Package remote-server tarball
+        run: |
+          strip target/release/warp-oss
+          cp target/release/warp-oss oz
+          tar czf oz-linux-x86_64.tar.gz oz
+          rm oz
+
+      - name: Create GitHub Release and upload tarball
+        uses: softprops/action-gh-release@v2
+        with:
+          files: oz-linux-x86_64.tar.gz
+          generate_release_notes: false
+          body: |
+            Warpinator remote-server daemon for Linux x86_64.
+
+            Populates the local SCP-fallback cache automatically on fresh installs.
+            To pre-stage manually:
+            ```
+            mkdir -p ~/.cache/Warp-Oss/remote-server/tarballs/unversioned/linux-x86_64
+            curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/oz-linux-x86_64.tar.gz \
+              -o ~/.cache/Warp-Oss/remote-server/tarballs/unversioned/linux-x86_64/oz.tar.gz
+            ```
