@@ -317,6 +317,11 @@ where
             }
         }
 
+        // Flush the writer so bracketed-paste sequences (and other multi-chunk
+        // writes) reach the PTY atomically. Without this, apps like nano can
+        // stall waiting for the closing \x1b[201~ bracket that's still buffered.
+        let _ = self.pty.writer().flush();
+
         Ok(())
     }
 

@@ -100,16 +100,17 @@ pub fn convert_keyboard_input_event(
         {
             input.key_without_modifiers()
         }
-        // On Windows, non-Latin keyboard layouts (Cyrillic, Greek, Arabic, etc.) translate
-        // the physical key to a non-ASCII character even when Ctrl/Cmd is held. That makes
-        // bindings like `ctrl-c` / `ctrl-v` fail to match. Fall back to the US-QWERTY
-        // position so chord shortcuts work regardless of the active layout — same approach
-        // used by VS Code, JetBrains, and Chromium. Issue #9036.
+        // On Windows and Linux, non-Latin keyboard layouts (Cyrillic, Greek, Arabic,
+        // French AZERTY, German QWERTZ, etc.) translate the physical key to a non-ASCII
+        // character even when Ctrl/Cmd is held. That makes bindings like `ctrl-c` /
+        // `ctrl-v` / `ctrl-r` fail to match on non-US keyboards. Fall back to the
+        // US-QWERTY position so chord shortcuts work regardless of the active layout —
+        // same approach used by VS Code, JetBrains, and Chromium. Issue #9036 / #341.
         //
         // Right-Alt is excluded because Windows reports AltGr as Ctrl+Alt; without this
         // guard, AltGr-produced characters (e.g. `€` on a German layout) would be rewritten
         // into a spurious chord and the typed character would be swallowed.
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         Key::Character(c)
             if (window_state.modifiers.control_key() || window_state.modifiers.super_key())
                 && !window_state.right_alt_pressed
@@ -278,7 +279,7 @@ fn convert_key(key: Key) -> Option<Cow<'static, str>> {
 /// Returns `None` for keys outside the standard letter/digit/punctuation set (function keys,
 /// modifiers, navigation keys, etc.), since those either aren't typically used in chord
 /// bindings as character keys or are already handled via `NamedKey` in `convert_key`.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 fn us_qwerty_fallback_for_chord(
     physical_key: &winit::keyboard::PhysicalKey,
     shift: bool,

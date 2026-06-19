@@ -1289,8 +1289,9 @@ esac
 
   warp_update_prompt_vars
 
-  # Set history to flush after every command
-  setopt share_history
+  # Set history to flush after every command and write incrementally so other
+  # terminals (VS Code, plain zsh) see new commands without waiting for session exit.
+  setopt inc_append_history share_history
 
   # Overrides compadd so that we can hook into parts of the completion stack
   # where richer completions data is available.
