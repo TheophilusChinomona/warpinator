@@ -1,0 +1,97 @@
+name: warpinator Release
+
+on:
+  push:
+    tags:
+      - 'v*-warpinator'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -C debuginfo=line-tables-only --cfg=web_sys_unstable_apis
+
+jobs:
+  release:
+    name: Build & Publish warpinator
+    # ubuntu-24.04 is pinned — NOT ubuntu-latest. The remote target (Ubuntu 24.04,
+    # glibc 2.39) must match the runner's glibc. If ubuntu-latest rolls to 26.04
+    # (glibc 2.40+), a dynamically-linked binary fails on Ubuntu 24.04 remotes
+    # with "GLIBC_2.xx not found", surfacing as a post-install --version failure.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: warpinator-release
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config \
+            libssl-dev libfreetype-dev libexpat1-dev libgit2-dev \
+            libfontconfig1-dev libasound2-dev libclang-dev
+
+      - name: Install protoc
+        run: |
+          PROTOC_VERSION="25.1"
+          PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ZIP}"
+          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc 'include/*'
+          rm /tmp/protoc.zip
+          protoc --version
+
+      - name: Install Rust toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add rustfmt clippy
+
+      - name: Build warp-oss (release)
+        run: cargo build --release --bin warp-oss --features gui,local_fs,git_operations_in_code_review
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          echo "version=${V%-warpinator}" >> "$GITHUB_OUTPUT"
+
+      - name: Strip binary and package artifacts
+        run: |
+          strip target/release/warp-oss
+          # Remote-server daemon tarball (for SCP fallback cache)
+          cp target/release/warp-oss oz
+          tar czf oz-linux-x86_64.tar.gz oz
+          rm oz
+          # .deb package
+          chmod +x script/build-deb.sh
+          ./script/build-deb.sh "${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            warpinator_amd64.deb
+            oz-linux-x86_64.tar.gz
+          generate_release_notes: false
+          body: |
+            ## Install
+
+            ```bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/warpinator_amd64.deb \
+              -o /tmp/warpinator.deb && sudo dpkg -i /tmp/warpinator.deb
+            ```
+
+            Run `warpinator`. On first launch the wrapper auto-stages the SSH daemon tarball
+            so Project Explorer works over SSH with no extra steps.
+
+            ## Artifacts
+
+            - **`warpinator_amd64.deb`** — installs binary, sets `WGPU_BACKEND=gl`, auto-stages SSH daemon.
+            - **`oz-linux-x86_64.tar.gz`** — raw daemon tarball for manual SCP-cache staging.
