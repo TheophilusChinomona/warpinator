@@ -54,7 +54,7 @@ jobs:
           rustup component add rustfmt clippy
 
       - name: Build warp-oss (release)
-        run: cargo build --release --bin warp-oss --features gui,local_fs
+        run: cargo build --release --bin warp-oss --features gui,local_fs,git_operations_in_code_review
 
       - name: Extract version from tag
         id: version
