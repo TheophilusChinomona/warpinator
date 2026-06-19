@@ -13,7 +13,7 @@ CACHE_DIR="$HOME/.cache/Warp-Oss/remote-server/tarballs/unversioned/linux-x86_64
 CACHE_PATH="$CACHE_DIR/oz.tar.gz"
 
 if [ ! -f "$BINARY" ]; then
-  echo "error: $BINARY not found — run 'cargo build --release --bin warp-oss --features gui' first" >&2
+  echo "error: $BINARY not found — run 'cargo build --release --bin warp-oss --features gui,local_fs' first" >&2
   exit 1
 fi
 

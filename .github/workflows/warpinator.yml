@@ -62,7 +62,7 @@ jobs:
 
       - name: Build warp-oss (release)
         run: |
-          cargo build --release --bin warp-oss --features gui
+          cargo build --release --bin warp-oss --features gui,local_fs
 
       - name: Upload warp-oss binary
         uses: actions/upload-artifact@v4

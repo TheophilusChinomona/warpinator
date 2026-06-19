@@ -55,7 +55,7 @@ jobs:
 
       - name: Build warp-oss (release)
         run: |
-          cargo build --release --bin warp-oss --features gui
+          cargo build --release --bin warp-oss --features gui,local_fs
 
       - name: Package remote-server tarball
         run: |
