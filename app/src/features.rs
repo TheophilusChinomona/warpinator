@@ -499,6 +499,11 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::SuperGrok,
         #[cfg(feature = "gemini_enterprise")]
         FeatureFlag::GeminiEnterprise,
+        // Remote filesystem / SSH warpification — enabled whenever local_fs is compiled
+        // in so that Project Explorer and file editing work over SSH without needing a
+        // Warp account or release_bundle feature.
+        #[cfg(all(not(windows), feature = "local_fs"))]
+        FeatureFlag::SshRemoteServer,
     ]);
 
     flags

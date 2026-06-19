@@ -101,10 +101,10 @@ maybe_define_setting!(SshTmuxDeprecationNoticePending, group: WarpifySettings, {
     rename_all = "snake_case"
 )]
 pub enum SshExtensionInstallMode {
-    /// Always prompt the user before installing (default).
-    #[default]
+    /// Always prompt the user before installing.
     AlwaysAsk,
-    /// Automatically install and connect without prompting.
+    /// Automatically install and connect without prompting (default for Warpinator).
+    #[default]
     AlwaysInstall,
     /// Never install; fall back to wrapper-only SSH warpification.
     NeverInstall,
