@@ -11,7 +11,7 @@ env:
 
 jobs:
   release:
-    name: Build & Publish warpinator remote-server
+    name: Build & Publish warpinator
     # ubuntu-24.04 is pinned — NOT ubuntu-latest. The remote target (Ubuntu 24.04,
     # glibc 2.39) must match the runner's glibc. If ubuntu-latest rolls to 26.04
     # (glibc 2.40+), a dynamically-linked binary fails on Ubuntu 24.04 remotes
@@ -57,25 +57,103 @@ jobs:
         run: |
           cargo build --release --bin warp-oss --features gui,local_fs
 
-      - name: Package remote-server tarball
+      - name: Extract version from tag
+        id: version
         run: |
-          strip target/release/warp-oss
+          # v0.2.0-warpinator -> 0.2.0
+          echo "version=${GITHUB_REF_NAME#v}" | sed 's/-warpinator$//' >> "$GITHUB_OUTPUT"
+
+      - name: Strip binary
+        run: strip target/release/warp-oss
+
+      - name: Package remote-server tarball (for SCP fallback cache)
+        run: |
           cp target/release/warp-oss oz
           tar czf oz-linux-x86_64.tar.gz oz
           rm oz
 
-      - name: Create GitHub Release and upload tarball
+      - name: Build .deb package
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PKG="warpinator_${VERSION}_amd64"
+          mkdir -p "$PKG/DEBIAN" \
+                   "$PKG/usr/lib/warpinator" \
+                   "$PKG/usr/bin" \
+                   "$PKG/usr/share/applications" \
+                   "$PKG/usr/share/doc/warpinator"
+
+          # Binary
+          cp target/release/warp-oss "$PKG/usr/lib/warpinator/warp-oss"
+          chmod 755 "$PKG/usr/lib/warpinator/warp-oss"
+
+          # Launcher wrapper: sets WGPU_BACKEND=gl for Intel/Mesa stability and
+          # auto-stages the remote-server daemon tarball from the installed binary
+          # so SSH warpification works without a separate download.
+          cat > "$PKG/usr/bin/warpinator" << 'SCRIPT'
+#!/bin/bash
+# Auto-stage daemon tarball for SSH remote-server if not already present.
+CACHE_DIR="$HOME/.cache/Warp-Oss/remote-server/tarballs/unversioned/linux-x86_64"
+if [ ! -f "$CACHE_DIR/oz.tar.gz" ]; then
+    mkdir -p "$CACHE_DIR"
+    _tmp=$(mktemp -d)
+    cp /usr/lib/warpinator/warp-oss "$_tmp/oz"
+    tar czf "$CACHE_DIR/oz.tar.gz" -C "$_tmp" oz
+    rm -rf "$_tmp"
+fi
+# Default to OpenGL backend to avoid Vulkan glyph-atlas corruption on Intel HD 630/Mesa.
+export WGPU_BACKEND="${WGPU_BACKEND:-gl}"
+exec /usr/lib/warpinator/warp-oss "$@"
+SCRIPT
+          chmod 755 "$PKG/usr/bin/warpinator"
+
+          # .desktop entry
+          cat > "$PKG/usr/share/applications/warpinator.desktop" << 'DESKTOP'
+[Desktop Entry]
+Name=Warpinator
+Comment=AI-powered terminal with remote filesystem support
+Exec=warpinator
+Terminal=false
+Type=Application
+Categories=System;TerminalEmulator;
+DESKTOP
+
+          # Debian control file
+          cat > "$PKG/DEBIAN/control" << EOF
+Package: warpinator
+Version: $VERSION
+Architecture: amd64
+Maintainer: Theophilus Chinomona <hein@speccon.co.za>
+Depends: libssl3, libfontconfig1, libasound2t64, libgit2-1.7 | libgit2-1.5
+Description: Warpinator — AI terminal with SSH remote filesystem
+ Fork of Warp terminal replacing the Oz cloud backend with a self-hosted
+ Pi sidecar (BYO API keys). Adds Wave Terminal-style SSH remote filesystem:
+ Project Explorer, file editing, and code navigation work over SSH without
+ a Warp account.
+EOF
+
+          dpkg-deb --build "$PKG" "warpinator_amd64.deb"
+          echo "Built $(du -sh warpinator_amd64.deb | cut -f1) .deb"
+
+      - name: Create GitHub Release and upload artifacts
         uses: softprops/action-gh-release@v2
         with:
-          files: oz-linux-x86_64.tar.gz
+          files: |
+            warpinator_amd64.deb
+            oz-linux-x86_64.tar.gz
           generate_release_notes: false
           body: |
-            Warpinator remote-server daemon for Linux x86_64.
+            ## Install
 
-            Populates the local SCP-fallback cache automatically on fresh installs.
-            To pre-stage manually:
+            ```bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/warpinator_amd64.deb \
+              -o /tmp/warpinator.deb && sudo dpkg -i /tmp/warpinator.deb
             ```
-            mkdir -p ~/.cache/Warp-Oss/remote-server/tarballs/unversioned/linux-x86_64
-            curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/oz-linux-x86_64.tar.gz \
-              -o ~/.cache/Warp-Oss/remote-server/tarballs/unversioned/linux-x86_64/oz.tar.gz
-            ```
+
+            Then run `warpinator`. On first launch the wrapper auto-stages the SSH
+            remote-server daemon tarball so Project Explorer works over SSH immediately.
+
+            ## What's included
+
+            - **`warpinator_amd64.deb`** — installs `warpinator` launcher + binary; handles
+              `WGPU_BACKEND=gl` (Intel/Mesa fix) and daemon auto-staging automatically.
+            - **`oz-linux-x86_64.tar.gz`** — raw daemon tarball for manual SCP-cache staging.
