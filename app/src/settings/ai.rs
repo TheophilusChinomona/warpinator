@@ -27,7 +27,6 @@ use warpui::platform::OperatingSystem;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity, UpdateModel};
 
 use crate::ai::request_usage_model::RequestLimitInfo;
-use crate::auth::AuthStateProvider;
 use crate::report_if_error;
 use crate::settings::PrivacySettings;
 use crate::terminal::CLIAgent;
@@ -1522,6 +1521,19 @@ define_settings_group!(AISettings, settings: [
         toml_path: "agents.warp_agent.other.auto_handoff_on_sleep_enabled",
         description: "Whether Warp automatically hands off local agent conversations to cloud when the computer is about to sleep.",
     }
+
+    // This is not a user-visible setting - it's merely a one-time flag to track if the
+    // auto-handoff sleep modal has been shown to the user.
+    //
+    // We model it as a setting so it's only shown once to a given user regardless of the number of
+    // devices they use.
+    did_show_auto_handoff_sleep_modal: DidShowAutoHandoffSleepModal {
+        type: bool,
+        default: false,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::No),
+        private: true,
+    }
 ]);
 
 impl AISettings {
@@ -1559,13 +1571,11 @@ impl AISettings {
     }
 
     pub fn is_any_ai_enabled(&self, app: &AppContext) -> bool {
-        // Disable AI for anonymous and logged-out users.
-        let is_anonymous_or_logged_out = AuthStateProvider::as_ref(app)
-            .get()
-            .is_anonymous_or_logged_out();
-
+        // warpinator: AI runs against the local warpinator bridge using the user's own API keys,
+        // so it does NOT require a Warp account. Upstream disabled all AI for anonymous/logged-out
+        // users here, which (via default_session_mode + agent-mode availability) is what hid the AI
+        // entirely when signed out. We drop that account requirement for the open-source build.
         *self.is_any_ai_enabled
-            && !is_anonymous_or_logged_out
             && !self.is_ai_disabled_due_to_remote_session_org_policy(app)
     }
 

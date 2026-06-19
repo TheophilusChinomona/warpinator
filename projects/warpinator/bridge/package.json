@@ -1,0 +1,15 @@
+{
+  "name": "warpinator-bridge",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Phase 0 hello-world bridge: speaks Warp's warp_multi_agent_api wire contract. Will host Pi in later phases.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "encode-test": "node encode-test.js"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "^0.73.1",
+    "protobufjs": "^7.4.0"
+  }
+}

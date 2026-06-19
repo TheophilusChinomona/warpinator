@@ -623,11 +623,10 @@ impl LLMPreferences {
             custom_llms,
         };
 
-        // In agent mode eval builds, eagerly kick off a fetch of the model list from the server
-        // so that it's available by the time test steps like `set_preferred_agent_mode_llm` run.
-        // In production, this is handled reactively (on auth complete, network online, etc.)
-        // to avoid duplicate requests at startup.
-        #[cfg(feature = "agent_mode_evals")]
+        // warpinator: eagerly fetch the model list at startup. Upstream relies on reactive
+        // triggers (auth complete, network online, app-became-active) to avoid duplicate
+        // requests, but those don't reliably fire for the account-free OSS build, which left
+        // the model picker empty. A one-shot fetch here populates it deterministically.
         me.refresh_available_models(ctx);
 
         me
@@ -1108,11 +1107,13 @@ impl LLMPreferences {
             async move { ai_api_client.get_free_available_models(None).await },
             |me, result, ctx| match result {
                 Ok(update) => {
+                    log::info!("warpinator: free models fetch OK (parsed)");
                     if update != me.models_by_feature {
                         me.on_server_update(update, ctx);
                     }
                 }
                 Err(e) => {
+                    log::error!("warpinator: free models fetch ERROR: {e:#}");
                     report_error!(e.context("Failed to fetch free-tier LLMs from server"));
                 }
             },

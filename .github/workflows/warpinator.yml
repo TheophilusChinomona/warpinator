@@ -1,0 +1,100 @@
+name: warpinator Build
+
+on:
+  push:
+    branches: [developer, feature/warpinator*]
+    paths:
+      - 'app/src/**'
+      - 'crates/**'
+      - 'projects/warpinator/**'
+  pull_request:
+    branches: [developer]
+    paths:
+      - 'app/src/**'
+      - 'crates/**'
+      - 'projects/warpinator/**'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -C debuginfo=line-tables-only --cfg=web_sys_unstable_apis
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & Test warpinator
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: warpinator-release
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config \
+            libssl-dev libfreetype-dev libexpat1-dev libgit2-dev \
+            libfontconfig1-dev libasound2-dev libclang-dev
+
+      - name: Install protoc
+        run: |
+          PROTOC_VERSION="25.1"
+          PROTOC_ZIP="protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          curl -fsSL -o /tmp/protoc.zip \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${PROTOC_ZIP}"
+          sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc 'include/*'
+          rm /tmp/protoc.zip
+          protoc --version
+
+      - name: Install Rust toolchain
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup component add rustfmt clippy
+
+      - name: Build warp-oss (release)
+        run: |
+          cargo build --release --bin warp-oss --features gui,local_fs
+
+      - name: Upload warp-oss binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: warp-oss-linux-x86_64
+          path: target/release/warp-oss
+          retention-days: 7
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install bridge dependencies
+        run: |
+          cd projects/warpinator/bridge
+          npm ci
+
+      - name: Run bridge tests
+        run: |
+          cd projects/warpinator/bridge
+          node server.js &
+          SERVER_PID=$!
+          sleep 3
+          node error-test.js
+          node catalog-test.js
+          node inference-test.js
+          node agent-test.js
+          node file-tools-test.js
+          kill $SERVER_PID || true
+
+      - name: Lint bridge
+        run: |
+          cd projects/warpinator/bridge
+          npx eslint *.js || true

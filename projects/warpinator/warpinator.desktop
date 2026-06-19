@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=warpinator
+GenericName=Terminal
+Comment=Warp terminal with account-free, bring-your-own-key AI (Pi/OpenRouter)
+Exec=REPLACE_WITH_HOME/.local/bin/warpinator
+Icon=REPLACE_WITH_REPO/script/warp.svg
+Terminal=false
+Categories=Utility;TerminalEmulator;
+Keywords=warp;terminal;ai;agent;openrouter;
+StartupNotify=true

@@ -56,6 +56,7 @@ test = false
 [dependencies]
 addr = "0.15.6"
 ai.workspace = true
+alphanumeric-sort = "1.5.7"
 anyhow.workspace = true
 arrayvec.workspace = true
 asset_cache.workspace = true
@@ -465,6 +466,7 @@ autoupdate = []
 figma_detection = []
 bundled_skills = []
 supergrok = []
+gemini_enterprise = []
 agent_mode = []
 agent_mode_computer_use = []
 agent_mode_debug = []
@@ -610,8 +612,6 @@ default = [
     "cloud_mode_from_local_session",
     "cloud_mode_image_context",
     "agent_mode_computer_use",
-    "oz_platform_skills",
-    "oz_identity_federation",
     "sync_ambient_plans",
     "conversation_artifacts",
     "agent_view",
@@ -620,14 +620,12 @@ default = [
     "inline_slash_commands",
     "inline_history_menu",
     "inline_model_selector",
-    "oz_launch_modal",
     "open_warp_launch_modal",
     "orchestration_launch_modal",
     "new_tab_styling",
     "richtext_multiselect",
     "inline_profile_selector",
     "web_fetch_ui",
-    "oz_changelog_updates",
     "skill_arguments",
     "incremental_auto_reload",
     "active_conversation_requires_interaction",
@@ -668,7 +666,6 @@ default = [
     "settings_file",
     "directory_tab_colors",
     "git_credential_refresh",
-    "oz_handoff",
     "handoff_local_cloud",
     "run_agents_tool",
     "orchestration_viewer_streamer",
@@ -722,7 +719,6 @@ nld_heuristic_v1 = ["input_classifier/nld_heuristic_v1"]
 nld_heuristic_v2 = ["input_classifier/nld_heuristic_v2"]
 msys2_shells = []
 file_retrieval_tools = []
-welcome_tab = []
 get_started_tab = []
 code_mode_chip = []
 github_pr_prompt_chip = []
@@ -785,7 +781,6 @@ mcp_server = []
 mcp_oauth = []
 mcp_debugging_ids = []
 notebook_parameter = []
-oz_changelog_updates = []
 personal_cloud_objects = []
 # Remote-backed tty that connects to a PTY-like interface via a server.
 remote_tty = []
@@ -960,9 +955,6 @@ lsp_as_a_tool = []
 inline_model_selector = ["agent_view"]
 inline_profile_selector = ["agent_view"]
 restore_prompt_on_inline_model_selector_search = []
-oz_platform_skills = []
-oz_identity_federation = []
-oz_launch_modal = []
 open_warp_launch_modal = []
 orchestration_launch_modal = []
 new_tab_styling = []
@@ -987,7 +979,6 @@ grouped_tabs = []
 pinned_tabs = []
 warp_control_cli = []
 agent_harness = []
-oz_handoff = []
 handoff_local_cloud = []
 hoa_notifications = []
 open_code_notifications = []

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# warpinator launcher — open-source Warp with account-free, bring-your-own-key AI
+# (local Pi/OpenRouter bridge). The binary auto-spawns the bridge; this script just
+# ensures node is on PATH (GNOME's app-menu env is minimal) and points at the build.
+#
+# Install: cp this file to ~/.local/bin/warpinator (and chmod +x)
+# Desktop entry: see warpinator.desktop (cp to ~/.local/share/applications/)
+REPO="/home/theo/Documents/Theochinomona.tech/infra/warpinator"
+
+# node (for the auto-spawned bridge) + ~/.local/bin on PATH
+export PATH="/home/theo/.nvm/versions/node/v24.15.0/bin:$HOME/.local/bin:$PATH"
+# where the bridge lives (binary resolves this when installed outside the repo)
+export WARPINATOR_BRIDGE_DIR="$REPO/projects/warpinator/bridge"
+
+# Force the OpenGL wgpu backend. On Intel integrated GPUs (HD 630 / Kaby Lake)
+# the Vulkan backend intermittently corrupts the glyph atlas -> the whole window
+# renders as garbled text, and it never self-heals because wgpu reports no error.
+# GL sidesteps it. Override at runtime with `WGPU_BACKEND=vulkan warpinator`.
+export WGPU_BACKEND="${WGPU_BACKEND:-gl}"
+
+# Prefer the optimized release build; fall back to the debug build.
+BIN="$REPO/target/release/warp-oss"
+[ -x "$BIN" ] || BIN="$REPO/target/debug/warp-oss"
+
+exec "$BIN" "$@"
