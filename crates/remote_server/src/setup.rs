@@ -640,6 +640,16 @@ fn version_query() -> String {
 /// parameterized by the remote platform. Used by the SCP upload
 /// fallback to download the same artifact the shell script would fetch.
 pub fn download_tarball_url(platform: &RemotePlatform) -> String {
+    // warpinator: for OSS builds, serve tarballs from GitHub Releases instead
+    // of the Warp CDN (which requires an account and uses query-string routing
+    // that GitHub's asset URLs don't support).
+    if matches!(ChannelState::channel(), Channel::Oss) {
+        return format!(
+            "https://github.com/TheophilusChinomona/warpinator/releases/latest/download/oz-{}-{}.tar.gz",
+            platform.os.as_str(),
+            platform.arch.as_str()
+        );
+    }
     format!(
         "{}?package=tar&os={}&arch={}&channel={}{}",
         download_url(),
